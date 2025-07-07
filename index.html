@@ -1,0 +1,320 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <link rel="manifest" href="manifest.json">
+<script>
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.register('service-worker.js')
+      .then(() => console.log('✅ 서비스워커 등록됨'));
+  }
+</script>
+
+ <!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>도파민 디톡스 캘린더 트래커</title>
+<link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet" />
+<style>
+  body { font-family: 'Pretendard', sans-serif; }
+  .checklist input:checked + span { text-decoration: line-through; color: gray; }
+  .calendar-day {
+    cursor: pointer;
+    padding: 8px;
+    border-radius: 4px;
+    text-align: center;
+    user-select: none;
+  }
+  .calendar-day.selected {
+    background-color: #3b82f6;
+    color: white;
+    font-weight: bold;
+  }
+  .calendar-day:hover {
+    background-color: #93c5fd;
+  }
+  #weeklySummary { display: none; }
+  #motivationMsg {
+    background-color: #e0f2fe;
+    border-left: 4px solid #3b82f6;
+    padding: 12px;
+    margin-bottom: 12px;
+    border-radius: 4px;
+    font-weight: 600;
+    font-size: 1.1rem;
+    color: #0369a1;
+  }
+</style>
+</head>
+<body class="bg-gray-100 text-gray-800 min-h-screen flex flex-col items-center p-4">
+
+<h1 class="text-3xl font-bold mb-6">🧠 도파민 디톡스 캘린더 트래커</h1>
+
+<section class="mb-6 w-full max-w-xl bg-white p-4 rounded shadow">
+  <div class="flex justify-between items-center mb-3">
+    <button id="prevMonth" class="px-3 py-1 bg-blue-500 text-white rounded">이전</button>
+    <h2 id="monthYear" class="text-xl font-semibold"></h2>
+    <button id="nextMonth" class="px-3 py-1 bg-blue-500 text-white rounded">다음</button>
+  </div>
+  <div class="grid grid-cols-7 gap-1 text-center font-semibold mb-1">
+    <div>일</div><div>월</div><div>화</div><div>수</div><div>목</div><div>금</div><div>토</div>
+  </div>
+  <div id="calendar" class="grid grid-cols-7 gap-1"></div>
+</section>
+
+<section class="mb-4 w-full max-w-xl bg-white p-4 rounded shadow">
+  <div id="motivationMsg">오늘도 잘하고 있어요! 포기하지 말고 계속 나아가세요! 💪</div>
+</section>
+
+<section class="mb-8 w-full max-w-xl bg-white p-4 rounded shadow">
+  <h3 class="text-xl font-semibold mb-3">📅 선택한 날짜: <span id="selectedDateStr"></span></h3>
+  
+  <div class="mb-4">
+    <h4 class="font-semibold mb-2">✅ 체크리스트</h4>
+    <div id="checklist" class="space-y-2 checklist"></div>
+    <div class="flex gap-2 mt-2">
+      <input type="text" id="newItemInput" placeholder="새 항목 추가..." class="border p-2 rounded flex-1" />
+      <button id="addItemBtn" class="bg-green-500 text-white px-4 py-2 rounded">추가</button>
+    </div>
+  </div>
+
+  <div>
+    <h4 class="font-semibold mb-2">📝 오늘의 소감</h4>
+    <textarea id="diaryInput" rows="5" placeholder="오늘 하루를 돌아보며 느낀 점을 적어보세요..." class="w-full border p-3 rounded"></textarea>
+    <button id="saveDiaryBtn" class="bg-blue-500 text-white px-4 py-2 rounded mt-2">저장하기</button>
+  </div>
+</section>
+
+<section class="mb-8 w-full max-w-xl bg-white p-4 rounded shadow">
+  <button id="toggleWeeklySummary" class="bg-purple-600 text-white px-4 py-2 rounded mb-3">주간 소감 요약 보기</button>
+  <div id="weeklySummary" class="space-y-4 max-h-96 overflow-y-auto"></div>
+</section>
+
+<script>
+  // 날짜 포맷 (YYYY-MM-DD)
+  function formatDateKey(date) {
+    const tzoffset = date.getTimezoneOffset() * 60000;
+    return new Date(date - tzoffset).toISOString().slice(0, 10);
+  }
+
+  // 저장키 생성
+  function getChecklistKey(date) {
+    return `checklist-${formatDateKey(date)}`;
+  }
+  function getChecklistCheckKey(date, index) {
+    return `checklist-${formatDateKey(date)}-item${index}`;
+  }
+  function getDiaryKey(date) {
+    return `diary-${formatDateKey(date)}`;
+  }
+
+  const defaultChecklist = ["스마트폰 없이 아침 보내기", "10분 명상", "SNS 안 보기", "산책 20분 이상"];
+
+  // 동기부여 문구 리스트
+  const motivationMessages = [
+    "오늘도 잘하고 있어요! 포기하지 말고 계속 나아가세요! 💪",
+    "작은 변화가 큰 성공을 만듭니다. 한 걸음씩 꾸준히!",
+    "도파민 디톡스, 당신의 집중력이 빛나는 시간입니다!",
+    "힘들 때일수록 더 강해지는 당신을 응원합니다!",
+    "집중하는 순간, 삶이 더 선명해집니다!",
+    "오늘의 노력은 내일의 성취로 돌아옵니다!",
+    "쉬어가는 것도 용기입니다. 천천히 가도 괜찮아요!",
+    "성공은 꾸준함에서 시작됩니다. 계속 나아가요!",
+  ];
+
+  // DOM
+  const calendarEl = document.getElementById("calendar");
+  const monthYearEl = document.getElementById("monthYear");
+  const selectedDateStrEl = document.getElementById("selectedDateStr");
+  const checklistEl = document.getElementById("checklist");
+  const newItemInput = document.getElementById("newItemInput");
+  const addItemBtn = document.getElementById("addItemBtn");
+  const diaryInput = document.getElementById("diaryInput");
+  const saveDiaryBtn = document.getElementById("saveDiaryBtn");
+  const toggleWeeklySummaryBtn = document.getElementById("toggleWeeklySummary");
+  const weeklySummaryEl = document.getElementById("weeklySummary");
+  const motivationMsgEl = document.getElementById("motivationMsg");
+
+  let currentDate = new Date();
+  let selectedDate = new Date();
+
+  // 달력 생성
+  function buildCalendar(date) {
+    calendarEl.innerHTML = "";
+    const year = date.getFullYear();
+    const month = date.getMonth();
+
+    monthYearEl.textContent = `${year}년 ${month + 1}월`;
+
+    const firstDay = new Date(year, month, 1).getDay();
+    const lastDate = new Date(year, month + 1, 0).getDate();
+
+    // 빈칸 채우기
+    for(let i=0; i < firstDay; i++){
+      calendarEl.appendChild(document.createElement("div"));
+    }
+
+    for(let d=1; d <= lastDate; d++){
+      const dayDiv = document.createElement("div");
+      dayDiv.classList.add("calendar-day");
+      dayDiv.textContent = d;
+
+      const today = new Date();
+      if(year === today.getFullYear() && month === today.getMonth() && d === today.getDate()){
+        dayDiv.classList.add("border","border-blue-500","font-bold");
+      }
+      if(year === selectedDate.getFullYear() && month === selectedDate.getMonth() && d === selectedDate.getDate()){
+        dayDiv.classList.add("selected");
+      }
+
+      dayDiv.addEventListener("click", () => {
+        selectedDate = new Date(year, month, d);
+        renderSelectedDate();
+        buildCalendar(currentDate);
+        renderChecklistAndDiary();
+        setMotivationMessage();
+      });
+
+      calendarEl.appendChild(dayDiv);
+    }
+  }
+
+  // 선택 날짜 표시
+  function renderSelectedDate(){
+    selectedDateStrEl.textContent = selectedDate.toLocaleDateString();
+  }
+
+  // 체크리스트 불러오기
+  function loadChecklistItems(date){
+    const stored = localStorage.getItem(getChecklistKey(date));
+    if(stored) return JSON.parse(stored);
+    return [...defaultChecklist];
+  }
+
+  // 체크리스트 렌더링 & 체크 상태 반영
+  function renderChecklistAndDiary(){
+    checklistEl.innerHTML = "";
+    const items = loadChecklistItems(selectedDate);
+
+    if(items.length === 0){
+      checklistEl.textContent = "체크리스트 항목이 없습니다. 새 항목을 추가해보세요.";
+      return;
+    }
+
+    items.forEach((item, index) => {
+      const id = getChecklistCheckKey(selectedDate, index);
+      const checked = localStorage.getItem(id) === "true";
+
+      const label = document.createElement("label");
+      label.className = "flex items-center";
+
+      const checkbox = document.createElement("input");
+      checkbox.type = "checkbox";
+      checkbox.checked = checked; // 체크 상태 반영
+      checkbox.className = "mr-2";
+
+      checkbox.addEventListener("change", () => {
+        localStorage.setItem(id, checkbox.checked);
+      });
+
+      const span = document.createElement("span");
+      span.textContent = item;
+
+      label.appendChild(checkbox);
+      label.appendChild(span);
+
+      checklistEl.appendChild(label);
+    });
+
+    // 소감 불러오기
+    diaryInput.value = localStorage.getItem(getDiaryKey(selectedDate)) || "";
+  }
+
+  // 새 체크리스트 항목 추가
+  addItemBtn.addEventListener("click", () => {
+    const newItem = newItemInput.value.trim();
+    if(newItem === ""){
+      alert("새 항목을 입력해주세요.");
+      return;
+    }
+    const items = loadChecklistItems(selectedDate);
+    items.push(newItem);
+    localStorage.setItem(getChecklistKey(selectedDate), JSON.stringify(items));
+    newItemInput.value = "";
+    renderChecklistAndDiary();
+  });
+
+  // 소감 저장
+  saveDiaryBtn.addEventListener("click", () => {
+    localStorage.setItem(getDiaryKey(selectedDate), diaryInput.value);
+    alert("소감이 저장되었습니다.");
+  });
+
+  // 달력 월 이동
+  document.getElementById("prevMonth").addEventListener("click", () => {
+    currentDate.setMonth(currentDate.getMonth() - 1);
+    buildCalendar(currentDate);
+  });
+  document.getElementById("nextMonth").addEventListener("click", () => {
+    currentDate.setMonth(currentDate.getMonth() + 1);
+    buildCalendar(currentDate);
+  });
+
+  // 주간 소감 요약 토글
+  toggleWeeklySummaryBtn.addEventListener("click", () => {
+    if(weeklySummaryEl.style.display === "none" || weeklySummaryEl.style.display === ""){
+      buildWeeklySummary();
+      weeklySummaryEl.style.display = "block";
+      toggleWeeklySummaryBtn.textContent = "주간 소감 요약 닫기";
+    } else {
+      weeklySummaryEl.style.display = "none";
+      toggleWeeklySummaryBtn.textContent = "주간 소감 요약 보기";
+    }
+  });
+
+  // 주간 소감 요약 생성 함수
+  function buildWeeklySummary(){
+    weeklySummaryEl.innerHTML = "";
+    for(let i=6; i >= 0; i--){
+      const d = new Date();
+      d.setHours(0,0,0,0);
+      d.setDate(d.getDate() - i);
+      const dateStr = d.toLocaleDateString();
+
+      const diary = localStorage.getItem(getDiaryKey(d)) || "작성 없음";
+
+      const dayDiv = document.createElement("div");
+      dayDiv.classList.add("border", "border-gray-300", "p-3", "rounded", "bg-gray-50");
+
+      dayDiv.innerHTML = `
+        <strong>${dateStr}</strong><br/>
+        소감: ${diary.length > 50 ? diary.slice(0,50) + "..." : diary}
+      `;
+
+      weeklySummaryEl.appendChild(dayDiv);
+    }
+  }
+
+  // 동기부여 메시지 출력 (날짜 바뀔 때마다 변경)
+  function setMotivationMessage(){
+    const idx = Math.floor(Math.random() * motivationMessages.length);
+    motivationMsgEl.textContent = motivationMessages[idx];
+  }
+
+  // 초기 실행
+  buildCalendar(currentDate);
+  renderSelectedDate();
+  renderChecklistAndDiary();
+  setMotivationMessage();
+
+</script>
+
+</body>
+</html>
+
+
+
+
+
+
